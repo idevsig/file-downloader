@@ -3,9 +3,6 @@ services:
     build:
       context: ../
       dockerfile: docker/Dockerfile
-      args:
-        UV_DEFAULT_INDEX: "https://mirrors.huaweicloud.com/repository/pypi/simple"
-        GITHUB_PROXY: "https://fastfile.asfd.cn/"
     # image: file-downloader:local
     container_name: file-downloader
     restart: unless-stopped

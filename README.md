@@ -4,16 +4,13 @@
 本项目是基于 MQTT 的云端文件下载器。
 
 ## 先决条件
-1. 安装 [uv](https://github.com/astral-sh/uv)。 
+1. 安装 [`uv`](https://github.com/astral-sh/uv)。 
     ```bash
     # On macOS and Linux.
     curl -LsSf https://astral.sh/uv/install.sh | sh
     ```
-2. 安装 [`m3u8-downloader`](https://github.com/forkdo/m3u8-downloader)（下载至服务器）。
-    ```bash
-    curl -L https://s.fx4.cn/m3u8-downloader | bash
-    ```
-3. 安装 [aria2c](https://github.com/aria2/aria2)。
+2. 安装 [`vsd`](https://github.com/forkdo/vsd) 和 [`ffmpeg`](https://ffmpeg.org/download.html)   
+3. 安装 [`aria2c`](https://github.com/aria2/aria2)。
 
 ## 安装
 
@@ -42,20 +39,32 @@
     ```bash
     {
       "url": "https://test.com/50941.m3u8",
-      "name": "testtest"
+      "name": "testtest",
+      "overwrite": 1
     }
     ```
     若忽略 `name`，则会生成随机文件名。
+    若忽略 `overwrite`，则会覆盖同名文件（仅支持**M3U8**）。
 
-4. 等待下载完成   
+4. 等待下载完成
 下载完成后，会发布消息到主题 `file/download/complete`，格式如下：
     ```json
     {
       "status": "success",
       "url": "https://test.com/wmfx.m3u8",
-      "name": "file_1749464069",
-      "file_path": "downloads/file_1749464069",
+      "name": "",
+      "file_path": "file_1749464069.mp4",
       "download_url": "http://127.0.0.1:3000/file_1749464069.mp4",
+      "timestamp": 1749464116
+    }
+    ```
+
+5. 删除云端文件（可选）
+当 puller 下载成功后，会发布删除请求到主题 `file/download/delete`，fetcher 接收后删除服务器上的文件。可通过 `puller.delete_remote_file` 配置项控制是否启用。
+    ```json
+    {
+      "file_path": "file_1749464069.mp4",
+      "name": "",
       "timestamp": 1749464116
     }
     ```
@@ -81,7 +90,7 @@
      docker run -d -v $(pwd)/downloads:/app/downloads --name file-downloader file-downloader:local
 
      # 使用环境变量
-     docker run -d -v $(pwd)/downloads:/app/downloads -e DOWNLOAD_PREFIX_URL="http://127.0.0.1:8080/" --name file-downloader file-downloader:local
+     docker run -d -v $(pwd)/downloads:/app/downloads -e DOWNLOAD_WEB_URL="http://127.0.0.1:8080/" --name file-downloader file-downloader:local
     ```
 
     **客户端**
@@ -120,32 +129,50 @@
 配置文件 `config.toml`:
 ```toml
 [mqtt]
-BROKER = "mqtt.eclipseprojects.io"
-PORT = 1883
-QOS = 0
-TOPIC_SUBSCRIBE = "file/download/request"
-TOPIC_PUBLISH = "file/download/complete"
-CLIENT_ID = "file_downloader_client"
-DOWNLOAD_DIR = "downloads"
-DOWNLOAD_PREFIX_URL = ""
-USERNAME = ""
-PASSWORD = ""
+broker = "test.mosquitto.org"
+port = 1883
+username = ""
+password = ""
+qos = 2
+keepalive = 60
+client_id = "file"
+
+topic_subscribe = "file/download/request"
+topic_publish = "file/download/complete"
 
 [aria2]
-ARIA2_SERVER_ENABLE = 0
-ARIA2_RPC_ENABLE = 0
-ARIA2_RPC_HOST = "http://localhost"
-ARIA2_RPC_PORT = 6800
-ARIA2_RPC_TOKEN = "your-secret-key"
-ARIA2_DOWNLOAD_DIR = "aria_downloads"
+rpc_enable = 1 # 是否启用 Aria2 RPC 服务
+rpc_host = "http://localhost"
+rpc_port = 6800
+rpc_token = "your-secret-key"
+download_dir = "aria_downloads"
+
+[download]
+# 下载文件保存目录
+save_dir = "downloads"
+# 下载文件 Web URL
+web_url = ""
+
+[puller]
+# 是否删除云端文件（下载成功后通知 fetcher 删除）
+delete_remote_file = 0
+# 下载超时时间（秒），默认 3600（1小时）
+download_timeout = 3600
 ```
 
-- **DOWNLOAD_PREFIX_URL** 用于替换下载文件的 URL 前缀。   
+- **download.web_url（环境变量 DOWNLOAD_WEB_URL）** 用于替换下载文件的 URL 前缀。
 比如文件名为 `test.mp4`，如果配置了此参数值为 `http://127.0.0.1:8080/downloads/`，则下载此 MP4 视频的网址为：`http://127.0.0.1:8080/downloads/test.mp4`。配合 `nginx` 反向代理使用。
+
+- **puller.delete_remote_file（环境变量 DELETE_REMOTE_FILE）** 控制 puller 下载完成后是否通知 fetcher 删除云端文件。设为 `1` 启用删除，设为 `0`（默认）禁用。
+
+- **puller.download_timeout（环境变量 DOWNLOAD_TIMEOUT）** 设置下载超时时间（秒）。默认 `3600`（1小时）。超时后下载任务将被取消。
 
 命令行参数:
 ```bash
-uv run fetcher --mqtt-broker mqtt.example.com --mqtt-port 1884
+uv run puller --delete-remote-file 1 --download-timeout 7200
+```
+```bash
+uv run fetcher --broker test.mosquitto.org --port 1883
 ```
 
 ## 运行
@@ -155,37 +182,43 @@ uv run fetcher
 ```
 
 ```mermaid
-flowchart TD
-    A[客户端A] -- 发布下载请求到主题 file/download/request --> M[MQTT 服务器]
-    subgraph VPS 服务器
-        direction TB
-        S1[订阅 file/download/request]
-        S2[解析请求消息，提取 M3U8/HTTP/MAGNET 地址]
-        S3[使用 m3u8-downloader 工具]
-        S4[下载 M3U8 片段]
-        S5[将 M3U8 的 TS 片段合成 MP4]
-        S6[生成 HTTP 下载地址发送到主题 file/download/complete]
-        S7[下载 HTTP 文件]
-        S8[下载 MAGNET 文件]
-        S9[使用 aria2c 工具]
-        
-        S1 --> S2
-        S2 -->|M3U8| S3 --> S4 --> S5 --> S6
-        S2 -->|HTTP| S9 --> S7 --> S6
-        S2 -->|MAGNET| S9 --> S8
+flowchart LR
+    subgraph 客户端A
+        A[发布下载请求]
     end
-    M -- 消息推送到订阅方 --> S1
 
-    S6 --> M2[MQTT 服务器]
+    subgraph MQTT服务器
+        M[消息路由]
+    end
 
-    M2 -- 将 HTTP 地址消息发布到主题 file/download/complete --> B[客户端B【可选】]
-    B -- 通过本地 aria2c CL工具--> L[下载保存文件]
-    B -- 通过调用 aria2c RPC 服务 --> L
+    subgraph VPS服务器
+        S1[订阅下载请求]
+        S2[解析请求]
+        S3[下载文件]
+        S6[发送完成消息]
+        S10[订阅删除请求]
+        S11[删除文件]
+
+        S1 --> S2 --> S3 --> S6
+        S10 --> S11
+    end
+
+    subgraph 客户端B["客户端B(可选)"]
+        B1[订阅完成消息]
+        B2[下载文件]
+        B3[发送删除请求]
+
+        B1 --> B2 --> B3
+    end
+
+    A -->|file/download/request| M
+    M --> S1
+    S6 -->|file/download/complete| M
+    M --> B1
+    B3 -->|file/download/delete| M
+    M --> S10
 ```
 
 ## 仓库镜像
 
-- https://git.jetsung.com/idev/file-downloader
-- https://framagit.org/idev/file-downloader
-- https://gitcode.com/idev/file-downloader
-- https://github.com/idev-sig/file-downloader
+[MyCode](https://git.jetsung.com/idev/file-downloader) ● [AtomGit](https://atomgit.com/idev/file-downloader) ● [GitHub](https://github.com/idevsig/file-downloader)

@@ -1,4 +1,3 @@
-import aria2p
 import paho.mqtt.client as mqtt
 import json
 import subprocess
@@ -6,13 +5,14 @@ import time
 import logging
 import queue
 import threading
+import aria2p
 from aria2s import Aria2cServer
 from logger import setup_logging
 from config import load_config
 from utils import extract_url_from_text, is_valid_magnet_url
 
 """
-下载到本地客户端
+下载文件到本地的命令行客户端
 """
 
 def on_connect(client, userdata, flags, rc, *args, **kwargs):
@@ -21,8 +21,8 @@ def on_connect(client, userdata, flags, rc, *args, **kwargs):
     if rc == 0:
         # 从 userdata 获取配置
         config = userdata['config']
-        client.subscribe(config['TOPIC_PUBLISH'], qos=config['QOS'])
-        logging.info(f"Subscribed to topic: {config['TOPIC_PUBLISH']} with QoS {config['QOS']}")
+        client.subscribe(config['topic_subscribe'], qos=config['qos'])
+        logging.info(f"Subscribed to topic: {config['topic_subscribe']} with QoS {config['qos']}")
     else:
         logging.error(f"Failed to connect to MQTT broker: {rc}")
 
@@ -40,10 +40,10 @@ def download_file(download_url, config):
     """
     下载文件
     """
-    if config['ARIA2_RPC_ENABLE']:
-        download_file_aria2_rpc(download_url, config)
+    if config['aria2_rpc_enable']:
+        return download_file_aria2_rpc(download_url, config)
     else:
-        download_file_aria2c_cmd(download_url, config)
+        return download_file_aria2c_cmd(download_url, config)
 
 def download_file_aria2_rpc(download_url, config):
     """
@@ -52,15 +52,86 @@ def download_file_aria2_rpc(download_url, config):
     """
     logging.info(f"Downloading file using aria2 RPC: {download_url}")
     try:
-        save_dir = config.get('ARIA2_DOWNLOAD_DIR', 'aria_downloads')
-        Aria2cServer(
-            host=config.get('ARIA2_RPC_HOST', '127.0.0.1'),
-            port=config.get('ARIA2_RPC_PORT', 6800),
-            secret=config.get('ARIA2_RPC_TOKEN', ''),
+        save_dir = config.get('aria2_download_dir', 'aria_downloads')
+        aria2server = Aria2cServer(
+            host=config.get('aria2_rpc_host', '127.0.0.1'),
+            port=config.get('aria2_rpc_port', 6800),
+            secret=config.get('aria2_rpc_token', ''),
             save_dir=save_dir,
-        ).download(download_url, save_dir)  
+        )
+
+        # 添加下载任务
+        aria2 = aria2p.API(aria2server.client(timeout=30))
+        options = {'dir': aria2server._real_save_dir(save_dir)}
+        download = aria2.add_uris([download_url], options=options)
+        logging.info(f"Download added: {download.gid}")
+
+        # 轮询等待下载完成
+        max_wait_time = config.get('download_timeout', 3600)  # 默认1小时超时
+        waited_time = 0
+        last_progress = -1
+        retry_count = 0
+        max_retries = 3
+
+        # 小文件可能瞬间完成，先检查一次
+        try:
+            download.update()
+            if download.is_complete:
+                logging.info(f"Download completed (small file): {download.name}")
+                return True
+            if download.has_failed:
+                logging.error(f"Download failed: {download.error_message}")
+                return None
+        except Exception as e:
+            logging.warning(f"Initial update failed: {str(e)}")
+
+        logging.info(f"Waiting for download to complete...")
+
+        while waited_time < max_wait_time:
+            try:
+                download.update()
+                retry_count = 0  # 重置重试计数
+
+                if download.is_complete:
+                    logging.info(f"Download completed: {download.name}")
+                    return True
+
+                if download.has_failed:
+                    logging.error(f"Download failed: {download.error_message}")
+                    return None
+
+                # 记录下载进度（避免重复日志）
+                progress = download.progress
+                if int(progress) != last_progress and int(progress) % 10 == 0:
+                    logging.info(f"Download progress: {progress:.1f}% - {download.name}")
+                    last_progress = int(progress)
+
+                # 每30秒记录一次等待状态（避免日志过多）
+                if waited_time > 0 and waited_time % 30 == 0:
+                    logging.info(f"Still waiting... ({waited_time}s elapsed, progress: {progress:.1f}%)")
+
+            except Exception as e:
+                retry_count += 1
+                logging.warning(f"RPC update failed (retry {retry_count}/{max_retries}): {str(e)}")
+                if retry_count >= max_retries:
+                    logging.error(f"Max retries reached, giving up update for this cycle")
+                    retry_count = 0
+                # 继续循环，不退出，因为下载可能仍在进行
+
+            time.sleep(2)
+            waited_time += 2
+
+        # 超时处理
+        logging.error(f"Download timeout after {max_wait_time}s: {download_url}")
+        try:
+            download.remove(force=True)
+        except:
+            pass
+        return None
+
     except Exception as e:
         logging.error(f"Error downloading file: {str(e)}")
+        return None
 
 def download_file_aria2c_cmd(download_url, config):
     """
@@ -73,7 +144,7 @@ def download_file_aria2c_cmd(download_url, config):
         command = [
             'aria2c',
             '-x', '16',
-            '-d', config['ARIA2_DOWNLOAD_DIR'],
+            '-d', config['aria2_download_dir'],
             download_url,
         ]
         
@@ -93,40 +164,104 @@ def download_file_aria2c_cmd(download_url, config):
             logging.info("File downloaded successfully")
             return True
         else:
-            logging.error(f"Failed to download file. Error: {result.stderr}")
+            # 优先使用 stderr，其次使用 stdout
+            error_output = result.stderr if result.stderr else result.stdout
+            logging.error(f"Failed to download file. Error: {error_output}")
             return None
             
     except Exception as e:
         logging.error(f"Error downloading file: {str(e)}")
         return None
-    
+
+
+def send_delete_request(client, config, file_path, name=""):
+    """
+    发送删除请求到 fetcher 服务器
+    """
+    try:
+        topic_delete = config.get("topic_delete")
+        if not topic_delete:
+            logging.warning("No delete topic configured, skipping delete request")
+            return False
+
+        delete_msg = {
+            "file_path": file_path,
+            "name": name,
+            "timestamp": int(time.time()),
+        }
+
+        result = client.publish(
+            topic_delete,
+            json.dumps(delete_msg, ensure_ascii=False),
+            qos=config["qos"],
+        )
+
+        if result.rc == mqtt.MQTT_ERR_SUCCESS:
+            logging.info(f"Sent delete request for: {file_path}")
+            return True
+        else:
+            logging.error(f"Failed to send delete request: {result.rc}")
+            return False
+
+    except Exception as e:
+        logging.error(f"Error sending delete request: {str(e)}")
+        return False
+
+
 def process_message(client, config, msg, receive_time):
-    """Process a single MQTT message."""
+    """
+    处理单个 MQTT 消息。
+    """
     try:
         payload = msg.payload.decode('utf-8')
         logging.info(f"Processing message: {payload}")
 
         # 尝试解析为JSON
+        file_path = None
+        file_name = ""
         try:
             data = json.loads(payload)
             download_url = data.get('download_url')
+            file_path = data.get('file_path')
+            file_name = data.get('name', '')
         except json.JSONDecodeError:
             # 如果不是JSON，尝试直接提取URL
             download_url = extract_url_from_text(payload)
-        
+
         if not download_url:
             logging.warning("No valid URL found in the message")
             return
-        
+
         if not is_valid_magnet_url(download_url) and not extract_url_from_text(download_url):
             logging.warning(f"Invalid URL: {download_url}")
             return
-            
+
         logging.info(f"Download URL: {download_url}")
 
+        # 判断是否存在存在 config['download_web_url'] 值，若存在，则将 download_url 域名修改为 download_web_url 这个的域名。
+        # 比如 download_url 为 https://a.com/a/a/a.mp4，aria2_download_dir 为 https://b.com 或 https://b.com/ ，那么将此 download_url 改为 https://b.com/a/a/a.mp4
+        if config.get('download_web_url') and config['download_web_url'].startswith(('http://', 'https://')):
+            from urllib.parse import urlparse
+
+            original_parsed = urlparse(download_url)
+            target_base = config['download_web_url'].rstrip('/')
+            download_url = target_base + original_parsed.path
+            logging.info(f"New Download URL: {download_url}")
+
         # 下载文件
-        download_file(download_url, config)
-            
+        download_result = download_file(download_url, config)
+
+        # 下载成功后发送删除请求到 fetcher 服务器
+        if download_result is not None and file_path:
+            # 检查是否启用删除远程文件功能
+            if config.get('delete_remote_file', False):
+                logging.info(f"Download successful, sending delete request for: {file_path}")
+                send_delete_request(client, config, file_path, file_name)
+            else:
+                logging.info(f"Download successful, delete_remote_file is disabled, skipping delete request")
+        elif file_path:
+            logging.warning(f"Download failed, not sending delete request for: {file_path}")
+
     except Exception as e:
         logging.error(f"Error processing message: {str(e)}")        
 
@@ -155,60 +290,61 @@ def on_log(client, userdata, paho_log_level, messages):
 def main():
     service_name = 'puller'
 
-    config = load_config()
+    config = load_config(service_name)
     
     # 配置参数
-    BROKER = config['BROKER']
-    PORT = config['PORT']
-    QOS = config['QOS']
-    KEEPALIVE = config['KEEPALIVE']
+    BROKER = config['broker']
+    PORT = config['port']
+    QOS = config['qos']
+    KEEPALIVE = config['keepalive']
     # MQTT_TOPIC_SUBSCRIBE = config['MQTT_TOPIC_SUBSCRIBE']
-    TOPIC_PUBLISH = config['TOPIC_PUBLISH']
+    TOPIC_PUBLISH = config['topic_publish']
     # yymmddhhiiss
     suffix = time.strftime(f"_{service_name}_%y%m%d%H%M%S", time.localtime())
-    CLIENT_ID = config['CLIENT_ID'] + suffix
-    # DOWNLOAD_DIR = config['DOWNLOAD_DIR']
-    # DOWNLOAD_PREFIX_URL=config['DOWNLOAD_PREFIX_URL']
+    CLIENT_ID = config['client_id'] + suffix
+    DOWNLOAD_WEB_URL = config["download_web_url"]
 
-    USERNAME = config.get('USERNAME', None)
-    PASSWORD = config.get('PASSWORD', None)
+    USERNAME = config.get('username', None)
+    PASSWORD = config.get('password', None)
 
-    ARIA2_SERVER_ENABLE = config.get('ARIA2_SERVER_ENABLE', False)
-    ARIA2_RPC_ENABLE = config.get('ARIA2_RPC_ENABLE', False)
+    ARIA2_RPC_ENABLE = config.get('aria2_rpc_enable', False)
+    ARIA2_RPC_HOST = config['aria2_rpc_host']
+    ARIA2_RPC_PORT = config['aria2_rpc_port']
+    ARIA2_RPC_TOKEN = config['aria2_rpc_token']
+    ARIA2_DOWNLOAD_DIR = config['aria2_download_dir']
 
-    ARIA2_RPC_HOST = config['ARIA2_RPC_HOST']
-    ARIA2_RPC_PORT = config['ARIA2_RPC_PORT']
-    ARIA2_RPC_TOKEN = config['ARIA2_RPC_TOKEN']
-    ARIA2_DOWNLOAD_DIR = config['ARIA2_DOWNLOAD_DIR']
+    DELETE_REMOTE_FILE = config.get('delete_remote_file', False)
+    DOWNLOAD_TIMEOUT = config.get('download_timeout', 3600)
 
     # 确保下载目录存在
     # if not os.path.exists(DOWNLOAD_DIR):
-    #     os.makedirs(DOWNLOAD_DIR)    
+    #     os.makedirs(DOWNLOAD_DIR)
 
-    # 设置日志    
+    # 设置日志
     setup_logging(service_name)
 
     # 这里添加你的 MQTT 客户端逻辑
     print("::Configuration loaded::")
     print(f"MQTT Broker: {BROKER}:{PORT}")
-    print(f"QoS Level: {QOS}")
-    print(f"Subscribe Topic: {TOPIC_PUBLISH}")
-    print(f"Client ID: {CLIENT_ID}")
-    # print(f"Download Directory: {DOWNLOAD_DIR}")
-    # print(f"Download Prefix URL: {DOWNLOAD_PREFIX_URL}")
     print(f"MQTT Username: {USERNAME}")
     print(f"MQTT Password: {PASSWORD}")
-    print(f"ARIA2 Server Enable: {ARIA2_SERVER_ENABLE}")
+    print(f"QoS Level: {QOS}")
+    print(f"Subscribe Topic: {TOPIC_PUBLISH}")
+    print(f"Delete Topic: {config.get('topic_delete', 'N/A')}")
+    print(f"Client ID: {CLIENT_ID}")
+    print(f"Download Web URL: {DOWNLOAD_WEB_URL}")
     print(f"ARIA2 RPC Enable: {ARIA2_RPC_ENABLE}")
     print(f"ARIA2 RPC Host: {ARIA2_RPC_HOST}")
     print(f"ARIA2 RPC Port: {ARIA2_RPC_PORT}")
     print(f"ARIA2 RPC Token: {ARIA2_RPC_TOKEN}")
     print(f"ARIA2 Download Dir: {ARIA2_DOWNLOAD_DIR}")
+    print(f"Delete Remote File: {DELETE_REMOTE_FILE}")
+    print(f"Download Timeout: {DOWNLOAD_TIMEOUT}")
     print()
 
-    config['CLIENT_ID'] = CLIENT_ID
-    config['USERNAME'] = USERNAME
-    config['PASSWORD'] = PASSWORD
+    config['client_id'] = CLIENT_ID
+    config['username'] = USERNAME
+    config['password'] = PASSWORD
 
     # Create message queue and stop event
     message_queue = queue.Queue()

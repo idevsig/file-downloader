@@ -9,7 +9,7 @@ def setup_logging(name: str):
     if not os.path.exists(log_path):
         os.makedirs(log_path)   
 
-    output_path = os.path.join(log_path, f'video_{name}.log')
+    output_path = os.path.join(log_path, f'file_{name}.log')
 
     logging.basicConfig(
         level=logging.INFO,

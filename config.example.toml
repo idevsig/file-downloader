@@ -1,0 +1,31 @@
+[mqtt]
+broker = "test.mosquitto.org"
+port = 1883
+username = ""
+password = ""
+qos = 2
+keepalive = 60
+client_id = "file"
+
+topic_subscribe = "file/download/request"
+topic_publish = "file/download/complete"
+topic_delete = "file/download/delete"
+
+[aria2]
+rpc_enable = 1 # 启用 aria2c 服务
+rpc_host = "http://localhost"
+rpc_port = 6800
+rpc_token = "your-secret-key"
+download_dir = "aria_downloads"
+
+[download]
+# 下载文件保存目录
+save_dir = "downloads"
+# 下载文件 Web URL
+web_url = ""
+
+[puller]
+# 是否删除云端文件（下载成功后通知 fetcher 删除）
+delete_remote_file = 0
+# 下载超时时间（秒），默认 3600（1小时）
+download_timeout = 3600

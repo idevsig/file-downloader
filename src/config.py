@@ -2,75 +2,176 @@ import os
 import toml
 import argparse
 
-def load_config():
-    """加载配置，优先级：命令行参数 > 配置文件 > 环境变量 > 默认值"""
-    # 默认配置
-    default_config = {
-        'BROKER': 'test.mosquitto.org',
-        'PORT': 1883,
-        'QOS': 0,
-        'KEEPALIVE': 60,
-        'TOPIC_SUBSCRIBE': 'video/download/request',
-        'TOPIC_PUBLISH': 'video/download/complete',
-        'CLIENT_ID': 'video_downloader_client',
-        'DOWNLOAD_DIR': 'downloads',
-        'DOWNLOAD_PREFIX_URL': '',
-        'USERNAME': None,
-        'PASSWORD': None,
+__version__ = "0.1.2"
 
-        'ARIA2_SERVER_ENABLE': True,
-        'ARIA2_RPC_ENABLE': False,
-        'ARIA2_RPC_HOST': 'http://localhost',
-        'ARIA2_RPC_PORT': 6800,
-        'ARIA2_RPC_TOKEN': '',
-        'ARIA2_DOWNLOAD_DIR': 'aria2_downloads',
+
+def load_config(service_name="fetcher"):
+    """加载配置，优先级：命令行参数 > 配置文件 > 环境变量 > 默认值"""
+    # 默认配置（使用小写键名）
+    default_config = {
+        "broker": "test.mosquitto.org",
+        "port": 1883,
+        "username": None,
+        "password": None,
+        "qos": 0,
+        "keepalive": 60,
+        "client_id": "file_downloader_client",
+        "topic_subscribe": "file/download/request",
+        "topic_publish": "file/download/complete",
+        "topic_delete": "file/download/delete",
+        "download_save_dir": "downloads",
+        "download_web_url": "",
+        "aria2_rpc_enable": False,
+        "aria2_rpc_host": "http://localhost",
+        "aria2_rpc_port": 6800,
+        "aria2_rpc_token": "",
+        "aria2_download_dir": "aria2_downloads",
+        "delete_remote_file": False,
+        "download_timeout": 3600,
+    }
+
+    # 环境变量名映射（环境变量使用大写）
+    env_key_mapping = {
+        "broker": "BROKER",
+        "port": "PORT",
+        "username": "USERNAME",
+        "password": "PASSWORD",
+        "qos": "QOS",
+        "keepalive": "KEEPALIVE",
+        "client_id": "CLIENT_ID",
+        "topic_subscribe": "TOPIC_SUBSCRIBE",
+        "topic_publish": "TOPIC_PUBLISH",
+        "topic_delete": "TOPIC_DELETE",
+        "download_save_dir": "DOWNLOAD_SAVE_DIR",
+        "download_web_url": "DOWNLOAD_WEB_URL",
+        "aria2_rpc_enable": "ARIA2_RPC_ENABLE",
+        "aria2_rpc_host": "ARIA2_RPC_HOST",
+        "aria2_rpc_port": "ARIA2_RPC_PORT",
+        "aria2_rpc_token": "ARIA2_RPC_TOKEN",
+        "aria2_download_dir": "ARIA2_DOWNLOAD_DIR",
+        "delete_remote_file": "DELETE_REMOTE_FILE",
+        "download_timeout": "DOWNLOAD_TIMEOUT",
     }
 
     # 初始化配置
     config = default_config.copy()
 
+    # puller 专用配置
+    if service_name == "puller":
+        config["topic_subscribe"] = "file/download/complete"
+
     # 1. 加载环境变量（最低优先级）
-    for key in default_config:
-        env_value = os.getenv(key)
+    # 环境变量使用大写命名
+    for config_key, env_key in env_key_mapping.items():
+        env_value = os.getenv(env_key)
         if env_value is not None:
             try:
-                if key in ('PORT', 'QOS', 'KEEPALIVE', 'ARIA2_RPC_PORT', 'ARIA2_SERVER_ENABLE', 'ARIA2_RPC_ENABLE'):
-                    config[key] = int(env_value)  # 类型转换
+                if config_key in (
+                    "port",
+                    "qos",
+                    "keepalive",
+                    "aria2_rpc_port",
+                    "aria2_rpc_enable",
+                    "delete_remote_file",
+                    "download_timeout",
+                ):
+                    config[config_key] = int(env_value)  # 类型转换
                 else:
-                    config[key] = env_value
-                print(f"Loaded {key} from environment: {env_value}")
+                    config[config_key] = env_value
+                print(f"Loaded {config_key} from environment: {env_value}")
             except ValueError as e:
-                print(f"Invalid environment variable {key}: {env_value}, error: {e}")
+                print(
+                    f"Invalid environment variable {env_key}: {env_value}, error: {e}"
+                )
 
     # 2. 加载配置文件（覆盖环境变量）
-    config_file = 'config.toml'
+    config_file = "config.toml"
     if os.path.exists(config_file):
         try:
-            with open(config_file, 'r', encoding='utf-8') as f:
+            with open(config_file, "r", encoding="utf-8") as f:
                 file_config = toml.load(f)
-            mqtt_section = file_config.get('mqtt', {})
-            for key in default_config:
-                if key in mqtt_section:
-                    try:
-                        if key in ('PORT', 'QOS', 'KEEPALIVE'):
-                            config[key] = int(mqtt_section[key])  # 类型转换
-                        else:
-                            config[key] = mqtt_section[key]
-                        print(f"Loaded {key} from config file: {mqtt_section[key]}")
-                    except ValueError as e:
-                        print(f"Invalid value for {key} in {config_file}: {mqtt_section[key]}, error: {e}")
 
-            aria2_rpc_section = file_config.get('aria2', {})
-            for key in default_config:
-                if key in aria2_rpc_section:
+            # 处理 mqtt 配置段
+            mqtt_section = file_config.get("mqtt", {})
+            for config_key in default_config:
+                if config_key in mqtt_section:
                     try:
-                        if key in ('ARIA2_RPC_PORT', 'ARIA2_SERVER_ENABLE', 'ARIA2_RPC_ENABLE'):
-                            config[key] = int(aria2_rpc_section[key])  # 类型转换
+                        if config_key in ("port", "qos", "keepalive"):
+                            config[config_key] = int(
+                                mqtt_section[config_key]
+                            )  # 类型转换
                         else:
-                            config[key] = aria2_rpc_section[key]
-                        print(f"Loaded {key} from config file: {aria2_rpc_section[key]}")
+                            config[config_key] = mqtt_section[config_key]
+                        print(
+                            f"Loaded {config_key} from config file: {mqtt_section[config_key]}"
+                        )
                     except ValueError as e:
-                        print(f"Invalid value for {key} in {config_file}: {aria2_rpc_section[key]}, error: {e}")
+                        print(
+                            f"Invalid value for {config_key} in {config_file}: {mqtt_section[config_key]}, error: {e}"
+                        )
+
+            # 处理 aria2 配置段
+            aria2_section = file_config.get("aria2", {})
+            # aria2 配置段中的键名映射
+            aria2_key_mapping = {
+                "rpc_enable": "aria2_rpc_enable",
+                "rpc_host": "aria2_rpc_host",
+                "rpc_port": "aria2_rpc_port",
+                "rpc_token": "aria2_rpc_token",
+                "download_dir": "aria2_download_dir",
+            }
+            for file_key, config_key in aria2_key_mapping.items():
+                if file_key in aria2_section and config_key in default_config:
+                    try:
+                        if config_key in ("aria2_rpc_port", "aria2_rpc_enable"):
+                            config[config_key] = int(
+                                aria2_section[file_key]
+                            )  # 类型转换
+                        else:
+                            config[config_key] = aria2_section[file_key]
+                        print(
+                            f"Loaded {config_key} from config file: {aria2_section[file_key]}"
+                        )
+                    except ValueError as e:
+                        print(
+                            f"Invalid value for {file_key} in {config_file}: {aria2_section[file_key]}, error: {e}"
+                        )
+
+            # 处理 download 配置段
+            download_section = file_config.get("download", {})
+            download_key_mapping = {
+                "save_dir": "download_save_dir",
+                "web_url": "download_web_url",
+            }
+            for file_key, config_key in download_key_mapping.items():
+                if file_key in download_section and config_key in default_config:
+                    try:
+                        config[config_key] = download_section[file_key]
+                        print(
+                            f"Loaded {config_key} from config file: {download_section[file_key]}"
+                        )
+                    except ValueError as e:
+                        print(
+                            f"Invalid value for {file_key} in {config_file}: {download_section[file_key]}, error: {e}"
+                        )
+
+            # 处理 puller 配置段
+            puller_section = file_config.get("puller", {})
+            puller_key_mapping = {
+                "delete_remote_file": "delete_remote_file",
+                "download_timeout": "download_timeout",
+            }
+            for file_key, config_key in puller_key_mapping.items():
+                if file_key in puller_section and config_key in default_config:
+                    try:
+                        config[config_key] = int(puller_section[file_key])
+                        print(
+                            f"Loaded {config_key} from config file: {puller_section[file_key]}"
+                        )
+                    except ValueError as e:
+                        print(
+                            f"Invalid value for {file_key} in {config_file}: {puller_section[file_key]}, error: {e}"
+                        )
 
         except Exception as e:
             print(f"Failed to load config file {config_file}: {e}")
@@ -78,54 +179,110 @@ def load_config():
     print()
 
     # 3. 解析命令行参数（最高优先级）
-    parser = argparse.ArgumentParser(description='Video Downloader MQTT Client')
-    parser.add_argument('--broker', help='MQTT Broker address')
-    parser.add_argument('--port', type=int, help='MQTT Broker port')
-    parser.add_argument('--qos', type=int, help='QoS level (0, 1, or 2)')
-    parser.add_argument('--keepalive', type=int, help='MQTT Keepalive interval')
-    parser.add_argument('--topic-subscribe', help='MQTT subscribe topic')
-    parser.add_argument('--topic-publish', help='MQTT publish topic')
-    parser.add_argument('--client-id', help='MQTT client ID')
-    parser.add_argument('--download-dir', help='Download directory')
-    parser.add_argument('--download-prefix-url', help='Download prefix URL')
-    parser.add_argument('--username', help='MQTT username for authentication')
-    parser.add_argument('--password', help='MQTT password for authentication')
-    parser.add_argument('--aria2-server-enable', type=int, help='Enable aria2 server (0 or 1)')
-    parser.add_argument('--aria2-rpc-enable', type=int, help='Enable aria2 RPC (0 or 1)')
-    parser.add_argument('--aria2-rpc-host', help='aria2 RPC host')
-    parser.add_argument('--aria2-rpc-port', type=int, help='aria2 RPC port')
-    parser.add_argument('--aria2-rpc-token', help='aria2 RPC token')
-    parser.add_argument('--aria2-download-dir', help='aria2 RPC download directory')
+    parser = argparse.ArgumentParser(description="Video Downloader MQTT Client")
+    parser.add_argument("--broker", help="MQTT Broker address")
+    parser.add_argument("--port", type=int, help="MQTT Broker port")
+    parser.add_argument("--qos", type=int, help="QoS level (0, 1, or 2)")
+    parser.add_argument("--keepalive", type=int, help="MQTT Keepalive interval")
+    parser.add_argument("--topic-subscribe", help="MQTT subscribe topic")
+    parser.add_argument("--client-id", help="MQTT client ID")
+    parser.add_argument("--username", help="MQTT username for authentication")
+    parser.add_argument("--password", help="MQTT password for authentication")
+    parser.add_argument(
+        "--aria2-rpc-enable", type=int, help="Enable aria2 RPC (0 or 1)"
+    )
+    parser.add_argument("--download-web-url", help="Download web URL")
+
+    parser.add_argument("--aria2-rpc-host", help="aria2 RPC host")
+    parser.add_argument("--aria2-rpc-port", type=int, help="aria2 RPC port")
+    parser.add_argument("--aria2-rpc-token", help="aria2 RPC token")
+    parser.add_argument("--aria2-download-dir", help="aria2 RPC download directory")
+    parser.add_argument(
+        "--version",
+        help="Show version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
+
+    # fetcher 专用参数
+    if service_name == "fetcher":
+        parser.add_argument("--topic-publish", help="MQTT publish topic")
+        parser.add_argument("--topic-delete", help="MQTT delete topic")
+        parser.add_argument("--download-save-dir", help="Download save directory")
+
+    # puller 专用参数
+    if service_name == "puller":
+        parser.add_argument(
+            "--delete-remote-file",
+            type=int,
+            choices=[0, 1],
+            help="Delete remote file after download (0 or 1)",
+        )
+        parser.add_argument(
+            "--download-timeout",
+            type=int,
+            help="Download timeout in seconds (default: 3600)",
+        )
 
     args = parser.parse_args()
 
     # 更新配置
-    for key in default_config:
-        arg_key = key.lower().replace('-', '_')  # 将大写下划线转换为小写连字符
-        arg_value = getattr(args, arg_key, None)
-        if arg_value is not None:
-            try:
-                config[key] = arg_value
-                print(f"Loaded {key} from command line: {arg_value}")
-            except ValueError as e:
-                print(f"Invalid command-line argument {arg_key}: {arg_value}, error: {e}")
+    # 命令行参数到配置键的映射
+    arg_key_mapping = {
+        "broker": "broker",
+        "port": "port",
+        "qos": "qos",
+        "keepalive": "keepalive",
+        "topic_subscribe": "topic_subscribe",
+        "client_id": "client_id",
+        "username": "username",
+        "password": "password",
+        "aria2_rpc_enable": "aria2_rpc_enable",
+        "aria2_rpc_host": "aria2_rpc_host",
+        "aria2_rpc_port": "aria2_rpc_port",
+        "aria2_rpc_token": "aria2_rpc_token",
+        "aria2_download_dir": "aria2_download_dir",
+        "topic_publish": "topic_publish",
+        "topic_delete": "topic_delete",
+        "download_save_dir": "download_save_dir",
+        "download_web_url": "download_web_url",
+        "delete_remote_file": "delete_remote_file",
+        "download_timeout": "download_timeout",
+    }
 
-    # 转换 ARIA2_RPC_ENABLE 为布尔值
-    config['ARIA2_RPC_ENABLE'] = bool(config['ARIA2_RPC_ENABLE'])
+    for arg_key, config_key in arg_key_mapping.items():
+        if config_key in default_config:
+            arg_value = getattr(args, arg_key, None)
+            if arg_value is not None:
+                try:
+                    config[config_key] = arg_value
+                    print(f"Loaded {config_key} from command line: {arg_value}")
+                except ValueError as e:
+                    print(
+                        f"Invalid command-line argument {arg_key}: {arg_value}, error: {e}"
+                    )
+
+    # 转换 aria2_rpc_enable 为布尔值
+    config["aria2_rpc_enable"] = bool(config["aria2_rpc_enable"])
+
+    # 转换 delete_remote_file 为布尔值
+    config["delete_remote_file"] = bool(config["delete_remote_file"])
 
     # 验证配置
-    if config['QOS'] not in (0, 1, 2):
-        print(f"Invalid QOS: {config['QOS']}, defaulting to 0")
-        config['QOS'] = 0
-    if config['PORT'] <= 0 or config['PORT'] > 65535:
-        print(f"Invalid PORT: {config['PORT']}, defaulting to 1883")
-        config['PORT'] = 1883
-    if config['ARIA2_RPC_PORT'] <= 0 or config['ARIA2_RPC_PORT'] > 65535:
-        print(f"Invalid ARIA2_RPC_PORT: {config['ARIA2_RPC_PORT']}, defaulting to 6800")
-        config['ARIA2_RPC_PORT'] = 6800
-    if not config['DOWNLOAD_DIR']:
-        print("Invalid DOWNLOAD_DIR, defaulting to 'downloads'")
-        config['DOWNLOAD_DIR'] = 'downloads'
+    if config["qos"] not in (0, 1, 2):
+        print(f"Invalid qos: {config['qos']}, defaulting to 0")
+        config["qos"] = 0
+    if config["port"] <= 0 or config["port"] > 65535:
+        print(f"Invalid port: {config['port']}, defaulting to 1883")
+        config["port"] = 1883
+    if config["aria2_rpc_port"] <= 0 or config["aria2_rpc_port"] > 65535:
+        print(f"Invalid aria2_rpc_port: {config['aria2_rpc_port']}, defaulting to 6800")
+        config["aria2_rpc_port"] = 6800
+    if not config["download_save_dir"]:
+        print("Invalid download_save_dir, defaulting to 'downloads'")
+        config["download_save_dir"] = "downloads"
+    if config["download_web_url"] and not config["download_web_url"].endswith("/"):
+        config["download_web_url"] += "/"
 
     print()
     return config

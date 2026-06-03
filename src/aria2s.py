@@ -5,6 +5,9 @@ import aria2p
 
 
 class Aria2cServer:
+    """
+    aria2c 服务器
+    """
     def __init__(self, host="http://localhost", port=6800, secret="", save_dir=""):
         self.debug = False
         self.host = host
@@ -15,7 +18,7 @@ class Aria2cServer:
         self._client = None
 
     def _real_save_dir(self, save_dir: str):
-        """Get the real save directory."""
+        """获取实际的保存目录。"""
         if save_dir:
             # If save_dir is an absolute path, return it as is
             if os.path.isabs(save_dir):
@@ -25,19 +28,19 @@ class Aria2cServer:
         # Return current working directory if save_dir is empty
         return os.getcwd()
 
-    def client(self):
-        """Get or create aria2p client instance."""
+    def client(self, timeout=30):
+        """获取或创建 aria2p 客户端实例。"""
         if self._client is None:
             self._client = aria2p.Client(
                 host=self.host,
                 port=self.port,
                 secret=self.secret,
-                timeout=5
+                timeout=timeout
             )
         return self._client
 
     def is_running(self):
-        """Check if aria2c server is running."""
+        """检查 aria2c 服务器是否正在运行。"""
         try:
             # 尝试连接到 RPC 服务
             client = self.client()
@@ -48,7 +51,7 @@ class Aria2cServer:
             return False
 
     def start(self):
-        """Start aria2c server."""
+        """启动 aria2c 服务器。"""
         # 先检查是否已经运行
         if self.is_running():
             logging.info("aria2c server is already running")
@@ -61,7 +64,7 @@ class Aria2cServer:
                 'aria2c', 
                 '--enable-rpc', 
                 f'--rpc-listen-port={self.port}',
-                f'--rpc-listen-all=true', 
+                '--rpc-listen-all=true', 
                 f'--rpc-secret={self.secret}', 
                 f'--dir={self.save_dir}', 
                 '--daemon=true',
@@ -84,15 +87,16 @@ class Aria2cServer:
                 logging.info("aria2c server started successfully")
                 return True
             else:
-                logging.error(f"Failed to start aria2c server. Error: {result.stderr}")
+                # 优先使用 stderr，其次使用 stdout
+                error_output = result.stderr if result.stderr else result.stdout
+                logging.error(f"Failed to start aria2c server. Error: {error_output}")
                 return False
         except Exception as e:
             logging.error(f"Error starting aria2c server: {str(e)}")
             return False
 
     def stop(self):
-        """Stop the aria2c server using aria2p."""
-        
+        """使用 aria2p 停止 aria2c 服务器。"""
         try:
             result = self.client().shutdown()
             if result:
@@ -127,7 +131,9 @@ class Aria2cServer:
                 
             download = aria2.add_uris([download_url], options=options)
             logging.info(f"Download added successfully: {download_url}")
-            return download.name
+            
+            # 返回下载对象，不等待完成（异步下载）
+            return download.gid
             
         except Exception as e:
             error_msg = f"Error adding download to aria2 RPC: {str(e)}"
