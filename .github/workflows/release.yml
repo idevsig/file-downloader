@@ -14,10 +14,10 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8
 
       # - name: Install uv (for act)
       #   run: |
@@ -68,7 +68,7 @@ jobs:
           gh release edit ${{ env.RELEASE_VERSION }} --draft=false --prerelease=false --latest
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: artifact
           path: ./dist/*.*

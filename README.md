@@ -96,10 +96,10 @@
     **客户端**
     ```bash
      # 使用外置的 aria2 下载视频
-     docker run -e ARIA2_RPC_HOST=http://192.168.1.138 -e ARIA2_DOWNLOAD_DIR=test_down -it file-downloader:local puller --qos 2 --aria2-rpc-token your-secret-key --aria2-rpc-enable 1 --aria2-rpc-download-dir test_download
+     docker run -e ARIA2_RPC_HOST=http://192.168.1.138 -e ARIA2_DOWNLOAD_DIR=test_down -it file-downloader:local puller --url "tcp://test.mosquitto.org:1883" --qos 2 --aria2-rpc-token your-secret-key --aria2-rpc-enable 1 --aria2-rpc-download-dir test_download
     
      # 挂载下载目录
-     docker run -e ARIA2_DOWNLOAD_DIR=test_down -e QOS=2 -v $(pwd)/aria2down:/app/test_down -it file-downloader:local puller
+     docker run -e ARIA2_DOWNLOAD_DIR=test_down -e QOS=2 -v $(pwd)/aria2down:/app/test_down -it file-downloader:local puller --url "tcp://test.mosquitto.org:1883"
 
      # aria2c rpc server
      aria2c --enable-rpc --rpc-listen-all=true --rpc-secret=your-secret-key --dir=/downloads
@@ -129,8 +129,11 @@
 配置文件 `config.toml`:
 ```toml
 [mqtt]
-broker = "test.mosquitto.org"
-port = 1883
+# MQTT Broker URL（支持 tcp://, ssl://, ws://, wss://）
+# 示例:
+#   TCP:  tcp://test.mosquitto.org:1883
+#   WSS:  wss://iot.asfd.cn:443/mqtt
+url = "tcp://test.mosquitto.org:1883"
 username = ""
 password = ""
 qos = 2
@@ -169,10 +172,10 @@ download_timeout = 3600
 
 命令行参数:
 ```bash
-uv run puller --delete-remote-file 1 --download-timeout 7200
+uv run puller --url "wss://iot.asfd.cn:443/mqtt" --username file --password 'A135790a!V' --delete-remote-file 1 --download-timeout 7200
 ```
 ```bash
-uv run fetcher --broker test.mosquitto.org --port 1883
+uv run fetcher --url "tcp://test.mosquitto.org:1883"
 ```
 
 ## 运行

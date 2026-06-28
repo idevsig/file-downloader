@@ -12,8 +12,7 @@ services:
     restart: unless-stopped
     environment:
       - TZ=Asia/Shanghai
-      - BROKER="test.mosquitto.org"
-      - PORT=1883
+      - MQTT_URL="tcp://test.mosquitto.org:1883"
       - USERNAME=""
       - PASSWORD=""
       - QOS=2
@@ -25,3 +24,4 @@ services:
       - DOWNLOAD_WEB_URL=""
     volumes:
       - ./downloads:/app/downloads
+```
