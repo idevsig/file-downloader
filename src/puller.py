@@ -293,7 +293,7 @@ def main():
     config = load_config(service_name)
     
     # 配置参数
-    BROKER = config['broker']
+    HOST = config['host']
     PORT = config['port']
     QOS = config['qos']
     KEEPALIVE = config['keepalive']
@@ -325,7 +325,9 @@ def main():
 
     # 这里添加你的 MQTT 客户端逻辑
     print("::Configuration loaded::")
-    print(f"MQTT Broker: {BROKER}:{PORT}")
+    print(f"MQTT URL: {config['url']}")
+    print(f"MQTT Host: {HOST}:{PORT}")
+    print(f"Transport: {config['transport']}")
     print(f"MQTT Username: {USERNAME}")
     print(f"MQTT Password: {PASSWORD}")
     print(f"QoS Level: {QOS}")
@@ -365,6 +367,17 @@ def main():
         mqttc.username_pw_set(USERNAME, PASSWORD)
         logging.info(f"Using MQTT authentication: username={USERNAME}")
 
+    # WebSocket 连接时配置 SSL/TLS 和路径
+    if config["transport"] == "websockets":
+        # 设置 WebSocket 路径
+        mqttc.ws_set_options(path=config.get("ws_path", "/mqtt"))
+        logging.info(f"WebSocket path: {config.get('ws_path', '/mqtt')}")
+
+        # 如果是 wss://，启用 SSL/TLS
+        if config.get("use_tls", False):
+            mqttc.tls_set()
+            logging.info("Enabled TLS for WebSocket connection (wss://)")
+
     mqttc.on_log = on_log
     mqttc.on_connect = on_connect
     mqttc.on_message = on_message    
@@ -378,8 +391,8 @@ def main():
     processor_thread.start()    
 
     try:
-        mqttc.connect(BROKER, PORT, keepalive=KEEPALIVE)  # 增加 keepalive
-        logging.info(f"Connecting to MQTT broker: {BROKER}:{PORT}")
+        mqttc.connect(HOST, PORT, keepalive=KEEPALIVE)  # 增加 keepalive
+        logging.info(f"Connecting to MQTT broker: {HOST}:{PORT}")
         mqttc.loop_start()  # 在后台线程运行 MQTT 循环
         while True:
             time.sleep(1)  # 主线程保持运行

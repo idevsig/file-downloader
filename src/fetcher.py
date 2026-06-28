@@ -391,7 +391,7 @@ def main():
     config = load_config(service_name)
 
     # Configuration parameters
-    BROKER = config["broker"]
+    HOST = config["host"]
     PORT = config["port"]
     QOS = config["qos"]
     KEEPALIVE = config["keepalive"]
@@ -413,7 +413,9 @@ def main():
 
     # Print configuration
     print("::Configuration loaded::")
-    print(f"MQTT Broker: {BROKER}:{PORT}")
+    print(f"MQTT URL: {config['url']}")
+    print(f"MQTT Host: {HOST}:{PORT}")
+    print(f"Transport: {config['transport']}")
     print(f"QoS Level: {QOS}")
     print(f"Subscribe Topic: {TOPIC_SUBSCRIBE}")
     print(f"Publish Topic: {TOPIC_PUBLISH}")
@@ -459,6 +461,17 @@ def main():
         mqttc.username_pw_set(USERNAME, PASSWORD)
         logging.info(f"Using MQTT authentication: username={USERNAME}")
 
+    # WebSocket 连接时配置 SSL/TLS 和路径
+    if config["transport"] == "websockets":
+        # 设置 WebSocket 路径
+        mqttc.ws_set_options(path=config.get("ws_path", "/mqtt"))
+        logging.info(f"WebSocket path: {config.get('ws_path', '/mqtt')}")
+
+        # 如果是 wss://，启用 SSL/TLS
+        if config.get("use_tls", False):
+            mqttc.tls_set()
+            logging.info("Enabled TLS for WebSocket connection (wss://)")
+
     # Set callbacks
     mqttc.on_log = on_log
     mqttc.on_connect = on_connect
@@ -472,8 +485,8 @@ def main():
 
     try:
         # Connect to MQTT broker
-        mqttc.connect(BROKER, PORT, keepalive=KEEPALIVE)
-        logging.info(f"Connecting to MQTT broker: {BROKER}:{PORT}")
+        mqttc.connect(HOST, PORT, keepalive=KEEPALIVE)
+        logging.info(f"Connecting to MQTT broker: {HOST}:{PORT}")
         mqttc.loop_start()  # Start MQTT loop in background thread
         while True:
             time.sleep(1)  # Keep main thread alive

@@ -1,7 +1,9 @@
 [mqtt]
-broker = "test.mosquitto.org"
-port = 1883
-transport = "tcp"  # 可选值: "tcp"（默认）或 "websockets"
+# MQTT Broker URL（支持 tcp://, ssl://, ws://, wss://）
+# 示例:
+#   TCP:  tcp://test.mosquitto.org:1883
+#   WSS:  wss://iot.asfd.cn:443/mqtt
+url = "tcp://test.mosquitto.org:1883"
 username = ""
 password = ""
 qos = 2

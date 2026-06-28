@@ -1,6 +1,7 @@
 import os
 import toml
 import argparse
+from urllib.parse import urlparse
 
 __version__ = "0.1.2"
 
@@ -9,8 +10,7 @@ def load_config(service_name="fetcher"):
     """加载配置，优先级：命令行参数 > 配置文件 > 环境变量 > 默认值"""
     # 默认配置（使用小写键名）
     default_config = {
-        "broker": "test.mosquitto.org",
-        "port": 1883,
+        "url": "tcp://test.mosquitto.org:1883",
         "transport": "tcp",
         "username": None,
         "password": None,
@@ -26,15 +26,14 @@ def load_config(service_name="fetcher"):
         "aria2_rpc_host": "http://localhost",
         "aria2_rpc_port": 6800,
         "aria2_rpc_token": "",
-        "aria2_download_dir": "aria2_downloads",
+        "aria2_download_dir": "aria_downloads",
         "delete_remote_file": False,
         "download_timeout": 3600,
     }
 
     # 环境变量名映射（环境变量使用大写）
     env_key_mapping = {
-        "broker": "BROKER",
-        "port": "PORT",
+        "url": "MQTT_URL",
         "transport": "TRANSPORT",
         "username": "USERNAME",
         "password": "PASSWORD",
@@ -69,7 +68,6 @@ def load_config(service_name="fetcher"):
         if env_value is not None:
             try:
                 if config_key in (
-                    "port",
                     "qos",
                     "keepalive",
                     "aria2_rpc_port",
@@ -98,7 +96,7 @@ def load_config(service_name="fetcher"):
             for config_key in default_config:
                 if config_key in mqtt_section:
                     try:
-                        if config_key in ("port", "qos", "keepalive"):
+                        if config_key in ("qos", "keepalive"):
                             config[config_key] = int(
                                 mqtt_section[config_key]
                             )  # 类型转换
@@ -182,9 +180,7 @@ def load_config(service_name="fetcher"):
 
     # 3. 解析命令行参数（最高优先级）
     parser = argparse.ArgumentParser(description="Video Downloader MQTT Client")
-    parser.add_argument("--broker", help="MQTT Broker address")
-    parser.add_argument("--port", type=int, help="MQTT Broker port")
-    parser.add_argument("--transport", choices=["tcp", "websockets"], help="MQTT transport: tcp or websockets")
+    parser.add_argument("--url", help="MQTT Broker URL (e.g., tcp://host:port, wss://host:port/path)")
     parser.add_argument("--qos", type=int, help="QoS level (0, 1, or 2)")
     parser.add_argument("--keepalive", type=int, help="MQTT Keepalive interval")
     parser.add_argument("--topic-subscribe", help="MQTT subscribe topic")
@@ -232,9 +228,7 @@ def load_config(service_name="fetcher"):
     # 更新配置
     # 命令行参数到配置键的映射
     arg_key_mapping = {
-        "broker": "broker",
-        "port": "port",
-        "transport": "transport",
+        "url": "url",
         "qos": "qos",
         "keepalive": "keepalive",
         "topic_subscribe": "topic_subscribe",
@@ -271,6 +265,27 @@ def load_config(service_name="fetcher"):
 
     # 转换 delete_remote_file 为布尔值
     config["delete_remote_file"] = bool(config["delete_remote_file"])
+
+    # 解析 URL 并提取 host 和 port
+    try:
+        parsed = urlparse(config["url"])
+        config["host"] = parsed.hostname or "test.mosquitto.org"
+        config["port"] = parsed.port or 1883
+        config["ws_path"] = parsed.path or "/mqtt"
+
+        # 如果 URL 以 wss:// 开头，自动设置 transport 为 websockets
+        if config["url"].startswith("wss://") or config["url"].startswith("ws://"):
+            config["transport"] = "websockets"
+            # 如果是 wss://，启用 TLS
+            config["use_tls"] = config["url"].startswith("wss://")
+        else:
+            config["use_tls"] = False
+    except Exception as e:
+        print(f"Invalid URL: {config['url']}, error: {e}")
+        config["host"] = "test.mosquitto.org"
+        config["port"] = 1883
+        config["ws_path"] = "/mqtt"
+        config["use_tls"] = False
 
     # 验证配置
     if config["qos"] not in (0, 1, 2):
