@@ -1,6 +1,7 @@
 [mqtt]
 broker = "test.mosquitto.org"
 port = 1883
+transport = "tcp"  # 可选值: "tcp"（默认）或 "websockets"
 username = ""
 password = ""
 qos = 2
