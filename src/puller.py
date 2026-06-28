@@ -357,7 +357,7 @@ def main():
     }    
 
     # 创建MQTT客户端
-    mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=CLIENT_ID, userdata=userdata)
+    mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=CLIENT_ID, userdata=userdata, transport=config["transport"])
     mqttc.reconnect_delay_set(min_delay=1, max_delay=120)
 
     # 设置用户名和密码
