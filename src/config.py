@@ -11,6 +11,7 @@ def load_config(service_name="fetcher"):
     default_config = {
         "broker": "test.mosquitto.org",
         "port": 1883,
+        "transport": "tcp",
         "username": None,
         "password": None,
         "qos": 0,
@@ -34,6 +35,7 @@ def load_config(service_name="fetcher"):
     env_key_mapping = {
         "broker": "BROKER",
         "port": "PORT",
+        "transport": "TRANSPORT",
         "username": "USERNAME",
         "password": "PASSWORD",
         "qos": "QOS",
@@ -182,6 +184,7 @@ def load_config(service_name="fetcher"):
     parser = argparse.ArgumentParser(description="Video Downloader MQTT Client")
     parser.add_argument("--broker", help="MQTT Broker address")
     parser.add_argument("--port", type=int, help="MQTT Broker port")
+    parser.add_argument("--transport", choices=["tcp", "websockets"], help="MQTT transport: tcp or websockets")
     parser.add_argument("--qos", type=int, help="QoS level (0, 1, or 2)")
     parser.add_argument("--keepalive", type=int, help="MQTT Keepalive interval")
     parser.add_argument("--topic-subscribe", help="MQTT subscribe topic")
@@ -231,6 +234,7 @@ def load_config(service_name="fetcher"):
     arg_key_mapping = {
         "broker": "broker",
         "port": "port",
+        "transport": "transport",
         "qos": "qos",
         "keepalive": "keepalive",
         "topic_subscribe": "topic_subscribe",
@@ -272,6 +276,9 @@ def load_config(service_name="fetcher"):
     if config["qos"] not in (0, 1, 2):
         print(f"Invalid qos: {config['qos']}, defaulting to 0")
         config["qos"] = 0
+    if config["transport"] not in ("tcp", "websockets"):
+        print(f"Invalid transport: {config['transport']}, defaulting to tcp")
+        config["transport"] = "tcp"
     if config["port"] <= 0 or config["port"] > 65535:
         print(f"Invalid port: {config['port']}, defaulting to 1883")
         config["port"] = 1883
